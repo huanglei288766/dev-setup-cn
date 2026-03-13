@@ -2,7 +2,7 @@
 # dev-setup-cn — 中国开发者一键环境配置
 # https://github.com/huanglei288766/dev-setup-cn
 
-set -e
+set -euo pipefail
 
 # 颜色输出
 RED='\033[0;31m'
@@ -22,11 +22,6 @@ detect_os() {
     OS="macos"
   elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     OS="linux"
-    if command -v apt-get &> /dev/null; then
-      DISTRO="debian"
-    elif command -v yum &> /dev/null; then
-      DISTRO="rhel"
-    fi
   else
     error "不支持的操作系统: $OSTYPE"
   fi
@@ -53,7 +48,6 @@ setup_npm_mirror() {
   info "配置 npm 镜像..."
   if command -v npm &> /dev/null; then
     npm config set registry https://mirrors.cloud.tencent.com/npm/
-    npm config set disturl https://mirrors.cloud.tencent.com/nodejs-release/
     success "npm 镜像已设置为腾讯云"
   else
     warn "npm 未安装，跳过"
@@ -107,7 +101,7 @@ setup_go_proxy() {
   info "配置 Go 代理..."
   if command -v go &> /dev/null; then
     go env -w GOPROXY=https://goproxy.cn,direct
-    go env -w GONOSUMCHECK=*
+    go env -w GONOSUMDB=*
     success "Go 代理已设置为 goproxy.cn"
   else
     warn "Go 未安装，跳过"
@@ -123,20 +117,28 @@ setup_docker_mirror() {
     DOCKER_DAEMON_JSON="$HOME/.docker/daemon.json"
   fi
 
-  mkdir -p "$(dirname $DOCKER_DAEMON_JSON)"
+  # 如果 daemon.json 已存在，不覆盖（防止破坏用户已有配置）
+  if [[ -f "$DOCKER_DAEMON_JSON" ]]; then
+    warn "Docker daemon.json 已存在: $DOCKER_DAEMON_JSON"
+    warn "请手动将以下镜像源添加到 registry-mirrors 中："
+    warn "  https://docker.m.daocloud.io"
+    warn "  https://dockerproxy.com"
+    return
+  fi
+
+  mkdir -p "$(dirname "$DOCKER_DAEMON_JSON")"
 
   cat > "$DOCKER_DAEMON_JSON" << 'EOF'
 {
   "registry-mirrors": [
-    "https://mirror.ccs.tencentyun.com",
-    "https://hub-mirror.c.163.com",
-    "https://docker.mirrors.ustc.edu.cn"
+    "https://docker.m.daocloud.io",
+    "https://dockerproxy.com"
   ]
 }
 EOF
-  success "Docker 镜像源已配置（腾讯云 + 网易 + 中科大）"
+  success "Docker 镜像源已配置（DaoCloud + DockerProxy）"
 
-  if [[ "$OS" == "linux" ]] && command -v systemctl &> /dev/null; then
+  if [[ "$OS" == "linux" ]] && command -v docker &> /dev/null && command -v systemctl &> /dev/null; then
     sudo systemctl daemon-reload
     sudo systemctl restart docker 2>/dev/null || warn "Docker 重启失败，请手动重启"
   elif [[ "$OS" == "macos" ]]; then
@@ -149,9 +151,8 @@ setup_homebrew_mirror() {
   if [[ "$OS" != "macos" ]]; then return; fi
   info "配置 Homebrew 镜像（清华 TUNA）..."
 
-  # 写入 shell 配置文件
   SHELL_RC="$HOME/.zshrc"
-  if [[ "$SHELL" == *"bash"* ]]; then
+  if [[ "${SHELL:-}" == *"bash"* ]]; then
     SHELL_RC="$HOME/.bashrc"
   fi
 
@@ -202,10 +203,8 @@ main() {
     [[ "$OS" == "macos" ]] && setup_homebrew_mirror
   elif $FRONTEND; then
     setup_npm_mirror
-    setup_docker_mirror
   elif $JAVA; then
     setup_maven_mirror
-    setup_docker_mirror
   else
     # 全量配置
     setup_git
@@ -219,7 +218,7 @@ main() {
 
   echo ""
   echo "======================================"
-  success "所有配置完成！Happy Coding! 🚀"
+  success "配置完成！"
   echo "======================================"
   echo ""
 }
